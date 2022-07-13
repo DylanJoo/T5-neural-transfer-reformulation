@@ -19,6 +19,12 @@ def main(args):
         for col in set(args.column_2):
             if col == 'Answer': # beside answer, append the rewrite question before
                 resource = f"{dict_canard['Rewrite']} {QUAC_ANS[quac_id][col]}"
+            elif col == 'History':
+                if args.full_context: 
+                    context = dict_canard['History']
+                else: # only question context (i.e. index 2, 4, 6, ...)
+                    context = [c for i, c in enumerate(dict_canard['History'][2:]) if i % 2 == 0]
+                resource = " ||| ".join(context) # only the histor for NQP
             elif col == 'History.cqe': # include topic context and response context
                 if args.full_context: 
                     context = dict_canard['History']

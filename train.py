@@ -12,7 +12,7 @@ from transformers import (
     DefaultDataCollator,
     DataCollatorForSeq2Seq,
 )
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, concatenate_datasets
 from models import T5VAEForConditionalGeneration
 from trainers import T5VAETrainer
 from utils import random_masking
@@ -98,17 +98,14 @@ def main():
     )
 
     # Dataset 
-    def prepare_dataset(examples):
+    def prepare_dataset(examples, prompt=''):
 
-        source = [src.split('\t')[1] for src in examples['source']]
-        target = [tgt.split('\t')[1] for tgt in examples['target']]
-
-        # random masking
-        # source = random_masking(source, '<unk>')
+        source = [ex.split('\t')[0] for ex in examples['text']]
+        target = [ex.split('\t')[1] for ex in examples['text']]
 
         # source tokenize
         features = tokenizer(
-                source,
+                [src + f" {prompt}" for src in source],
                 truncation=True,
                 max_length=data_args.max_length,
         )
@@ -126,30 +123,31 @@ def main():
         return features
 
     ## Loading form hf dataset
-    dataset_source = load_dataset('text', data_files={
-        'train': 'data/canard/train.history.ntr.tsv', 
-        'dev': 'data/canard/dev.history.ntr.tsv'
-    }).rename_column('text', 'source')
-
-    dataset_target = load_dataset('text', data_files={
-        'train': 'data/canard/train.rewrite.tsv', 
-        'dev': 'data/canard/dev.rewrite.tsv',
-    })
-
-    train_dataset = dataset_source['train'].add_column('target', dataset_target['train']['text'])
-    dev_dataset = dataset_source['dev'].add_column('target', dataset_target['dev']['text'])
+    train_ntr = load_dataset('text', data_files={'data/canard/train.ntr.seq2seq.tsv'})['train']
+    train_nqg = load_dataset('text', data_files={'data/canard/train.nqg.seq2seq.tsv'})['train']
+    dev_nqg = load_dataset('text', data_files={'data/canard/dev.nqg.seq2seq.tsv'})['train']
 
     ## Preprocessing
-    train_dataset = train_dataset.map(
+    train_ntr = train_ntr.map(
             function=prepare_dataset, 
-            remove_columns=['source', 'target'],
+            fn_kwargs={'prompt': "Reformulate Question: "},
+            remove_columns=['text'],
             num_proc=multiprocessing.cpu_count(),
             load_from_cache_file=not data_args.overwrite_cache,
             batched=True,
     )
-    dev_dataset = dev_dataset.map(
+    train_nqg = train_nqg.map(
             function=prepare_dataset, 
-            remove_columns=['source', 'target'],
+            fn_kwargs={'prompt': "Next Question: "},
+            remove_columns=['text'],
+            num_proc=multiprocessing.cpu_count(),
+            load_from_cache_file=not data_args.overwrite_cache,
+            batched=True,
+    )
+    dev_nqg = dev_nqg.map(
+            function=prepare_dataset, 
+            fn_kwargs={'prompt': "Next Question: "},
+            remove_columns=['text'],
             num_proc=multiprocessing.cpu_count(),
             load_from_cache_file=not data_args.overwrite_cache,
             batched=True,
@@ -163,11 +161,14 @@ def main():
     )
 
     # Trainer
+    train_dataset=concatenate_datasets([train_ntr, train_nqg])
+    train_dataset.shuffle(seed=1234)
+
     trainer = T5VAETrainer(
             model=model, 
             args=training_args,
             train_dataset=train_dataset,
-            eval_dataset=dev_dataset,
+            eval_dataset=dev_nqg,
             data_collator=data_collator
     )
     

@@ -210,16 +210,17 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
         loss = None
         loss_ce = 0
         loss_kl = 0
+        loss_kl_w = 0
         if labels is not None:
             # nll loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss_ce = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
 
             # kl loss (vae loss)
-            loss_kl_w = kl_weight(self.config.annealing_fn, 
-                                 steps, self.config.k, self.config.x0)
-            loss_kl = kl_loss(logv.view(-1, self.latent_size),
-                              mean.view(-1, self.latent_size))
+            # loss_kl_w = kl_weight(self.config.annealing_fn, 
+            #                      steps, self.config.k, self.config.x0)
+            # loss_kl = kl_loss(logv.view(-1, self.latent_size),
+            #                   mean.view(-1, self.latent_size))
             loss = loss_ce + loss_kl * loss_kl_w
             if steps % 10 == 0:
                 print(f"NLL: {loss_ce}\nKL: {loss_kl * loss_kl_w} = {loss_kl} * {loss_kl_w}")
