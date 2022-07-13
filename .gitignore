@@ -1,0 +1,14 @@
+ raw data
+data/canard/*.json
+data/quac/*.json
+
+# checkpoints
+checkpoints/
+
+# traing dependencies
+logs/
+wandb/
+
+__pycache__/
+*.swp
+
