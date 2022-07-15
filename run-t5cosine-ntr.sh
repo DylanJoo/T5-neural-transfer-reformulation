@@ -1,14 +1,13 @@
-python3 train.py \
+python3 train-t5cosine-ntr.py \
+  --per_device_train_batch_size 4 \
   --model_name_or_path t5-small \
   --config_name t5-small \
-  --output_dir checkpoints/t5vae.ntr.nqg \
+  --output_dir checkpoints/t5cosine.ntr \
   --max_length 512 \
-  --per_device_train_batch_size 4 \
   --max_steps 10000 \
-  --save_steps 5000 \
+  --save_steps 2500 \
   --eval_steps 2500 \
-  --vae_latent_size 512 \
   --vae_k 0.0025 \
-  --vae_x0 10 \
+  --vae_x0 5000 \
   --vae_annealing logistic \
   --do_train

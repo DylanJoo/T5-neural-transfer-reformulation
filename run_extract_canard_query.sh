@@ -5,6 +5,7 @@ python3 tools/extract_canard_query.py \
   -col2 Question \
   -col2 Rewrite \
   -col2 Answer \
+  -col2 Answer.tokens \
   -col2 History.cqe
  
 python3 tools/extract_canard_query.py \

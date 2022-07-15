@@ -1,7 +1,14 @@
+import spacy
 import json
 import argparse
 import collections
 import os
+
+def tokens_extraction(expansion_source):
+    pos = spacy.load("en_core_web_sm")
+    output = pos(expansion_source.lower())
+    entities = [token.text for token in output if (token.pos_ in ['NOUN', 'PROPN'])]
+    return " | ".join(entities)
 
 def main(args):
 
@@ -18,7 +25,10 @@ def main(args):
         assert QUAC_ANS[quac_id]['Question'] == dict_canard['Question'], 'Mismatched'
         for col in set(args.column_2):
             if col == 'Answer': # beside answer, append the rewrite question before
-                resource = f"{dict_canard['Rewrite']} {QUAC_ANS[quac_id][col]}"
+                resource = f"{dict_canard['Rewrite']} {QUAC_ANS[quac_id]['Answer']}"
+            elif col == 'Answer.tokens':
+                resource = f"{dict_canard['Rewrite']} {QUAC_ANS[quac_id]['Answer']}"
+                resource = tokens_extraction(resource)
             elif col == 'History':
                 if args.full_context: 
                     context = dict_canard['History']

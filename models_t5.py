@@ -4,12 +4,11 @@ from transformers import T5ForConditionalGeneration, T5Config
 from transformers.models.t5.modeling_t5 import T5Stack
 from transformers.modeling_outputs import Seq2SeqLMOutput, BaseModelOutput
 from torch import nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, CosineEmbeddingLoss
 from utils import kl_weight, kl_loss
 import copy
 
-# class T5ForConditionalGeneration(T5PreTrainedModel):
-class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
+class T5ForNTR(T5ForConditionalGeneration):
     _keys_to_ignore_on_load_missing = [
         r"encoder.embed_tokens.weight",
         r"decoder.embed_tokens.weight",
@@ -22,6 +21,9 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
     def __init__(self, config: T5Config, tokenizer=None):
         super().__init__(config)
         self.model_dim = config.d_model
+        ##
+        self.tokenizer = tokenizer
+        ###
 
         self.shared = nn.Embedding(config.vocab_size, config.d_model)
 
@@ -30,19 +32,6 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
         encoder_config.use_cache = False
         encoder_config.is_encoder_decoder = False
         self.encoder = T5Stack(encoder_config, self.shared)
-
-        # ========== VAE setting ==========
-        hidden_factor = 1
-        self.latent_size = config.latent_size
-
-        self.hidden2mean = nn.Linear(encoder_config.d_model * hidden_factor, config.latent_size)
-        self.hidden2logv = nn.Linear(encoder_config.d_model * hidden_factor, config.latent_size)
-        self.latent2hidden = nn.Linear(config.latent_size, encoder_config.d_model * hidden_factor)
-        self.tokenizer = tokenizer
-        # ========== VAE setting ==========
-        assert self.config.k is not None, 'Need to specify k'
-        assert self.config.x0 is not None, 'Need to specify x0'
-        assert self.config.annealing_fn is not None, 'Need to specify annealing function'
 
         decoder_config = copy.deepcopy(config)
         decoder_config.is_decoder = True
@@ -57,8 +46,6 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
 
         # Model parallel
         self.model_parallel = False
-        assert self.config.k is not None, 'Need to specify k'
-        assert self.config.x0 is not None, 'Need to specify x0'
         self.device_map = None
 
     def forward(
@@ -115,27 +102,6 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
 
         hidden_states = encoder_outputs[0]
 
-        """
-        Sinece the SVAE is adopted on 'sentence embedding' VAE, 
-        this model use L tokens embedding reconstruction VAE process instead.
-        hidden_states (B L H)
-        """
-        # ======T5 VAE ===== (1) test one
-        # REPARAMETERIZATION
-        # batch_size, seq_length = hidden_states.shape[:2]
-        # hidden_states_vae = hidden_states
-        #
-        # mean = self.hidden2mean(hidden_states_vae) # let the batch squeezed
-        # logv = self.hidden2logv(hidden_states_vae)
-        # std = torch.exp(0.5 * logv)
-        #
-        # # z = torch.randn([batch_size, self.latent_size])
-        # z = torch.randn([batch_size, seq_length, self.latent_size]).to(hidden_states_vae.device)
-        # z = z * std + mean
-        #
-        # # DECODER
-        # hidden_states_vae = self.latent2hidden(z)
-        # # ======T5 VAE =====
         if self.model_parallel:
             torch.cuda.set_device(self.decoder.first_device)
 
@@ -184,49 +150,23 @@ class T5VAEForConditionalGeneration(T5ForConditionalGeneration):
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
             sequence_output = sequence_output * (self.model_dim**-0.5)
 
-        """
-        In this T5 VAE setting, adopt the Late-VAE-style 
-        Based on variations of decoder hidden states
-        hidden_states: (B L H)
-        """
-        # ======T5 VAE ===== (1) test one
-        # REPARAMETERIZATION
-        # hidden_states_vae = sequence_output
-        #
-        # mean = self.hidden2mean(hidden_states_vae) # let the batch squeezed
-        # logv = self.hidden2logv(hidden_states_vae)
-        # std = torch.exp(0.5 * logv)
-        #
-        # z = torch.randn(hidden_states_vae.size()).to(hidden_states_vae.device)
-        # z = z * std + mean
-        #
-        # # DECODER
-        # hidden_states_vae = self.latent2hidden(z)
-        # sequence_output = hidden_states_vae
-        # # ======T5 VAE =====
-
         lm_logits = self.lm_head(sequence_output)
 
         loss = None
         loss_ce = 0
-        loss_kl = 0
-        loss_kl_w = 0
         if labels is not None:
             # nll loss
             loss_fct = CrossEntropyLoss(ignore_index=-100)
             loss_ce = loss_fct(lm_logits.view(-1, lm_logits.size(-1)), labels.view(-1))
+            loss = loss_ce 
 
-            # kl loss (vae loss)
-            # loss_kl_w = kl_weight(self.config.annealing_fn, 
-            #                      steps, self.config.k, self.config.x0)
-            # loss_kl = kl_loss(logv.view(-1, self.latent_size),
-            #                   mean.view(-1, self.latent_size))
-            loss = loss_ce + loss_kl * loss_kl_w
             if steps % 10 == 0:
-                print(f"NLL: {loss_ce}\nKL: {loss_kl * loss_kl_w} = {loss_kl} * {loss_kl_w}")
+                print(f"NLL: {loss_ce}")
                 with torch.no_grad():
-                    temp=self.generate(input_ids)
+                    temp=self.generate(input_ids=input_ids)
                     print(self.tokenizer.decode(temp[0], skip_special_tokens=True))
+                    labels_reformulate = [l for l in labels[0] if l != -100]
+                    print(self.tokenizer.decode(labels_reformulate, skip_special_tokens=True))
 
         if not return_dict:
             output = (lm_logits,) + decoder_outputs[1:] + encoder_outputs
